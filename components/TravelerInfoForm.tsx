@@ -42,7 +42,7 @@ export interface Traveler {
   documents: TravelerDocument[];
 }
 interface TravelerInfoFormProps {
-  travelerInfo: string;
+  travelerInfo: string; // JSON string
   setTravelerInfo: (value: string) => void;
 }
 
@@ -55,7 +55,7 @@ function emptyTraveler(): Omit<Traveler, 'id'> {
   return {
     dateOfBirth: '',
     name: { firstName: '', lastName: '' },
-    gender: '',
+    gender: '', // always initialize
     contact: {
       emailAddress: '',
       phones: [{
@@ -92,7 +92,7 @@ function sanitizeTraveler(trav: Partial<Omit<Traveler, 'id'>> | undefined): Omit
       firstName: trav?.name?.firstName || '',
       lastName: trav?.name?.lastName || ''
     },
-    gender: trav?.gender || '',
+    gender: typeof trav?.gender === 'string' ? trav.gender : '', // always initialize
     contact: {
       emailAddress: trav?.contact?.emailAddress || '',
       phones: Array.isArray(trav?.contact?.phones) && trav.contact.phones.length > 0
@@ -165,6 +165,7 @@ function getPathForDocument(idx: number, docIdx: number, key: string) {
 
 // --- Main Component ---
 export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: TravelerInfoFormProps) {
+  // On mount, always sanitize loaded data for all fields, including gender
   const [travelers, setTravelers] = useState<Omit<Traveler, 'id'>[]>(() => {
     try {
       if (typeof window !== "undefined") {
@@ -173,7 +174,7 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
           return getSafeTravelers(JSON.parse(local));
         }
       }
-      return getSafeTravelers(JSON.parse(travelerInfo));
+      return getSafeTravelers(JSON.parse(travelerInfo)); // prop always sanitized
     } catch {
       return [emptyTraveler()];
     }
@@ -184,9 +185,8 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
   const [touched, setTouched] = useState<TouchedMap>({});
   const [zodErrors, setZodErrors] = useState<ZodIssue[]>([]);
 
-  // Validate and sanitize on travelers change
+  // Always sanitize on travelers change (ensures gender is always present)
   useEffect(() => {
-    // Always sanitize before validating and saving
     const travelersSanitized = travelers.map(sanitizeTraveler);
 
     try {
@@ -367,7 +367,7 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
     <div>
       <h2 className="text-2xl font-extrabold text-indigo-800 mb-4">Traveler Info</h2>
       {Array.isArray(travelers) && travelers.map((trav, idx) => (
-        <div key={idx} className="mb-8 p-6 rounded-2xl border border-indigo-100 bg-indigo-50 shadow transition-all">
+        <div key={idx} className="mb-8 p-6 rounded-2xl border border-indigo-100 bg-indigo-50 shadow">
           <div className="flex items-center mb-2">
             <span className="font-bold text-lg text-indigo-900 mr-3">Traveler #{idx + 1}</span>
             {travelers.length > 1 && (
@@ -398,7 +398,7 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
               <span className="text-sm font-semibold text-indigo-700">Gender</span>
               <select
                 className="block w-full mt-1 p-2 rounded bg-white border border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 text-gray-900 font-medium"
-                value={trav.gender}
+                value={typeof trav.gender === 'string' ? trav.gender : ''}
                 onChange={e => handleTravelerChange(idx, 'gender', e.target.value)}
                 onBlur={() => touchField(getPathForTraveler(idx, 'gender'))}
               >
@@ -688,4 +688,3 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
     </div>
   );
 }
-

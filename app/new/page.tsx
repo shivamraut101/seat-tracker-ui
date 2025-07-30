@@ -6,6 +6,20 @@ import { useEffect, useState } from 'react';
 import { trackFlightAction, FormState } from '../actions/actions';
 import TravelerInfoForm from '../../components/TravelerInfoForm';
 
+/** Utility for localStorage with fallback and SSR safety */
+function safeLocalStorageGet(key: string, fallback: string) {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const value = localStorage.getItem(key);
+    return value !== null ? value : fallback;
+  }
+  return fallback;
+}
+function safeLocalStorageSet(key: string, value: string) {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    localStorage.setItem(key, value);
+  }
+}
+
 function SubmitButton() {
   const { pending } = useFormStatus();
   return (
@@ -19,84 +33,69 @@ function SubmitButton() {
   );
 }
 
+const DEFAULT_TRAVELER = {
+  id: '1',
+  dateOfBirth: '',
+  name: { firstName: '', lastName: '' },
+  gender: '',
+  contact: { emailAddress: '', phones: [{ deviceType: 'MOBILE', countryCallingCode: '', number: '' }] },
+  documents: [
+    {
+      documentType: 'PASSPORT',
+      birthPlace: '',
+      issuanceLocation: '',
+      issuanceDate: '',
+      number: '',
+      expiryDate: '',
+      issuanceCountry: '',
+      validityCountry: '',
+      nationality: '',
+      holder: true,
+    },
+  ],
+};
+
 export default function HomePage() {
   // Server Action state
   const initialState: FormState = { message: '', status: 'idle' };
   const [state, formAction] = useActionState(trackFlightAction, initialState);
 
-  // Form fields
+  // Form fields: Use industry best practice by tracking raw objects, not JSON strings
   const [email, setEmail] = useState('');
   const [bookingClass, setBookingClass] = useState('');
   const [flightNumber, setFlightNumber] = useState('');
-  const [travelerInfo, setTravelerInfo] = useState(
-    JSON.stringify(
-      [
-        {
-          id: '1',
-          dateOfBirth: '',
-          name: { firstName: '', lastName: '' },
-          gender: '',
-          contact: { emailAddress: '', phones: [{ deviceType: 'MOBILE', countryCallingCode: '', number: '' }] },
-          documents: [
-            {
-              documentType: 'PASSPORT',
-              birthPlace: '',
-              issuanceLocation: '',
-              issuanceDate: '',
-              number: '',
-              expiryDate: '',
-              issuanceCountry: '',
-              validityCountry: '',
-              nationality: '',
-              holder: true,
-            },
-          ],
-        },
-      ],
-      null,
-      2
-    )
-  );
+  const [travelerInfo, setTravelerInfo] = useState([DEFAULT_TRAVELER]);
   const [query, setQuery] = useState('');
 
-  // On mount, load all fields (including query) from localStorage if present, otherwise set defaults
+  // Load fields from localStorage (once on mount)
   useEffect(() => {
-    setEmail(localStorage.getItem('flightTracker_email') || 'agent@example.com');
-    setBookingClass(localStorage.getItem('flightTracker_bookingClass') || 'K');
-    setFlightNumber(localStorage.getItem('flightTracker_flightNumber') || '511');
-    setTravelerInfo(localStorage.getItem('flightTracker_travelerInfo') || JSON.stringify([
-      {
-        id: '1',
-        dateOfBirth: '',
-        name: { firstName: '', lastName: '' },
-        gender: '',
-        contact: { emailAddress: '', phones: [{ deviceType: 'MOBILE', countryCallingCode: '', number: '' }] },
-        documents: [
-          {
-            documentType: 'PASSPORT',
-            birthPlace: '',
-            issuanceLocation: '',
-            issuanceDate: '',
-            number: '',
-            expiryDate: '',
-            issuanceCountry: '',
-            validityCountry: '',
-            nationality: '',
-            holder: true,
-          },
-        ],
-      },
-    ], null, 2));
-    const savedQuery = localStorage.getItem('flightTracker_query');
-    setQuery(savedQuery !== null ? savedQuery : '');
+    setEmail(safeLocalStorageGet('flightTracker_email', 'agent@example.com'));
+    setBookingClass(safeLocalStorageGet('flightTracker_bookingClass', 'K'));
+    setFlightNumber(safeLocalStorageGet('flightTracker_flightNumber', '511'));
+
+    // Traveler info: parse from localStorage, fallback to default
+    try {
+      const raw = safeLocalStorageGet('flightTracker_travelerInfo', JSON.stringify([DEFAULT_TRAVELER]));
+      setTravelerInfo(JSON.parse(raw));
+    } catch {
+      setTravelerInfo([DEFAULT_TRAVELER]);
+    }
+
+    setQuery(safeLocalStorageGet('flightTracker_query', ''));
   }, []);
 
   // Persist fields to localStorage when they change
-  useEffect(() => { if (email) localStorage.setItem('flightTracker_email', email); }, [email]);
-  useEffect(() => { if (bookingClass) localStorage.setItem('flightTracker_bookingClass', bookingClass); }, [bookingClass]);
-  useEffect(() => { if (flightNumber !== undefined) localStorage.setItem('flightTracker_flightNumber', flightNumber); }, [flightNumber]);
-  useEffect(() => { if (travelerInfo) localStorage.setItem('flightTracker_travelerInfo', travelerInfo); }, [travelerInfo]);
-  useEffect(() => { localStorage.setItem('flightTracker_query', query); }, [query]);
+  useEffect(() => { if (email) safeLocalStorageSet('flightTracker_email', email); }, [email]);
+  useEffect(() => { if (bookingClass) safeLocalStorageSet('flightTracker_bookingClass', bookingClass); }, [bookingClass]);
+  useEffect(() => { safeLocalStorageSet('flightTracker_flightNumber', flightNumber ?? ''); }, [flightNumber]);
+  useEffect(() => {
+    // Store travelerInfo as stringified JSON
+    safeLocalStorageSet('flightTracker_travelerInfo', JSON.stringify(travelerInfo));
+  }, [travelerInfo]);
+  useEffect(() => { safeLocalStorageSet('flightTracker_query', query ?? ''); }, [query]);
+
+  // On submit: handle travelerInfo (pass as JSON string for hidden input)
+  const travelerInfoString = JSON.stringify(travelerInfo, null, 2);
 
   return (
     <main className="flex min-h-screen flex-col items-center bg-gray-100 p-8 sm:p-12 md:p-24">
@@ -118,6 +117,7 @@ export default function HomePage() {
                   onChange={(e) => setEmail(e.target.value)}
                   className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-base p-3 text-gray-800 bg-gray-50"
                   required
+                  autoComplete="email"
                 />
               </div>
               <div>
@@ -133,6 +133,7 @@ export default function HomePage() {
                   className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-base p-3 text-gray-800 bg-gray-50"
                   maxLength={5}
                   required
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -146,6 +147,7 @@ export default function HomePage() {
                   value={flightNumber}
                   onChange={(e) => setFlightNumber(e.target.value)}
                   className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-base p-3 text-gray-800 bg-gray-50"
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -166,10 +168,11 @@ export default function HomePage() {
                 onChange={(e) => setQuery(e.target.value)}
                 className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-3 font-mono text-gray-900 bg-gray-50"
                 required
+                autoComplete="off"
               />
             </div>
             {/* Hidden field for full traveler info */}
-            <input type="hidden" name="travelerInfo" value={travelerInfo} />
+            <input type="hidden" name="travelerInfo" value={travelerInfoString} />
             <div className="flex items-center justify-end">
               <SubmitButton />
             </div>
