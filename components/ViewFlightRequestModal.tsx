@@ -332,7 +332,7 @@ export default function ViewFlightRequestModal({
                         />
                       </div>
                       <div className="flex gap-2 mt-2">
-                        <Button size="sm" variant="success" onClick={() => handleSaveTraveler(i)}>
+                        <Button size="sm" variant="default" onClick={() => handleSaveTraveler(i)}>
                           <Save className="w-4 h-4 mr-1" /> Save
                         </Button>
                         <Button size="sm" variant="destructive" onClick={handleCancelTraveler}>
