@@ -1,196 +1,408 @@
-'use client';
+"use client";
 
-import { useActionState } from 'react';
-import { useFormStatus } from 'react-dom';
-import { useEffect, useState } from 'react';
-import { trackFlightAction, FormState } from './actions';
-import TravelerInfoForm from './components/TravelerInfoForm';
+import { useEffect, useState } from "react";
+import { Moon, Sun, Menu, UserCircle, LogOut, ChevronDown, Plane } from "lucide-react";
+import { getFlightRequests, updateFlightRequestStatus, updateFlightRequestTraveler, updateFlightRequestSearchQuery } from "./actions/flightRequests";
+import ViewFlightRequestModal, { FlightRequest } from "@/components/ViewFlightRequestModal";
+import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
+import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
+import toast from "react-hot-toast";
 
-function SubmitButton() {
-  const { pending } = useFormStatus();
+const STATUS_OPTIONS = [
+  { value: "active", label: "Active", color: "bg-blue-500" },
+  { value: "held", label: "Held", color: "bg-amber-500" },
+  { value: "queued", label: "Queued", color: "bg-purple-500" },
+  { value: "success", label: "Success", color: "bg-green-500" },
+  { value: "error", label: "Error", color: "bg-red-500" },
+];
+
+const FILTER_OPTIONS = [
+  { value: "All", label: "All" },
+  ...STATUS_OPTIONS.map(opt => ({
+    value: opt.value.charAt(0).toUpperCase() + opt.value.slice(1),
+    label: opt.label,
+  })),
+];
+
+export default function DashboardPage() {
+  const { theme, setTheme } = useTheme();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [requests, setRequests] = useState<FlightRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<string>("All");
+  const [selected, setSelected] = useState<FlightRequest | null>(null);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const data = await getFlightRequests(filter);
+      setRequests(data);
+    } catch (err) {
+      toast.error("Failed to fetch flight requests");
+      setRequests([]);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [filter]);
+
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    try {
+      setRequests((reqs) =>
+        reqs.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
+      );
+      const { success, data } = await updateFlightRequestStatus(id, newStatus);
+      if (success) {
+        setRequests((reqs) =>
+          reqs.map((r) => (r.id === id ? data : r))
+        );
+        toast.success("Status updated successfully");
+      }
+    } catch (err) {
+      toast.error("Failed to update status");
+      await fetchData(); // Revert by refetching
+    }
+  };
+
+  const handleUpdateTraveler = async (id: string, travelerInfo: any[]) => {
+    try {
+      setRequests((reqs) =>
+        reqs.map((r) => (r.id === id ? { ...r, traveler_info: travelerInfo } : r))
+      );
+      const { success, data } = await updateFlightRequestTraveler(id, travelerInfo);
+      if (success) {
+        setRequests((reqs) =>
+          reqs.map((r) => (r.id === id ? data : r))
+        );
+        toast.success("Traveler info updated successfully");
+      }
+    } catch (err) {
+      toast.error("Failed to update traveler info");
+      await fetchData(); // Revert by refetching
+    }
+  };
+
+  const handleUpdateSearchQuery = async (id: string, searchQuery: any) => {
+    try {
+      setRequests((reqs) =>
+        reqs.map((r) => (r.id === id ? { ...r, search_query: searchQuery } : r))
+      );
+      const { success, data } = await updateFlightRequestSearchQuery(id, searchQuery);
+      if (success) {
+        setRequests((reqs) =>
+          reqs.map((r) => (r.id === id ? data : r))
+        );
+        toast.success("Search query updated successfully");
+      }
+    } catch (err) {
+      toast.error("Failed to update search query");
+      await fetchData(); // Revert by refetching
+    }
+  };
+
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="inline-flex justify-center rounded-xl border border-transparent bg-indigo-700 py-3 px-7 text-base font-semibold text-white shadow transition-colors duration-150 hover:bg-indigo-800 active:bg-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:bg-indigo-300"
+    <div
+      className={`min-h-screen ${
+        theme === "dark"
+          ? "bg-gray-900 text-gray-100"
+          : "bg-gray-50 text-gray-900"
+      } font-inter`}
     >
-      {pending ? 'Submitting…' : 'Track Flight'}
-    </button>
+      {/* Navbar */}
+      <nav
+        className={`sticky top-0 z-30 flex items-center justify-between px-6 py-4 shadow-lg ${
+          theme === "dark" ? "bg-gray-950" : "bg-white"
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <Drawer open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <DrawerTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Open sidebar"
+                className="mr-2 md:hidden"
+              >
+                <Menu />
+              </Button>
+            </DrawerTrigger>
+            <DrawerContent
+              className={`${
+                theme === "dark" ? "bg-gray-950" : "bg-white"
+              } p-4`}
+            >
+              <SidebarContent onClose={() => setSidebarOpen(false)} />
+            </DrawerContent>
+          </Drawer>
+          <Plane className="h-7 w-7 text-indigo-600" />
+          <span className="ml-2 font-bold text-xl tracking-tight">
+            SeatTracker
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Toggle theme"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="transition"
+          >
+            {theme === "dark" ? <Sun /> : <Moon />}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Open profile menu"
+              >
+                <UserCircle className="h-7 w-7" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem>Profile</DropdownMenuItem>
+              <DropdownMenuItem>Settings</DropdownMenuItem>
+              <DropdownMenuItem className="text-red-500 flex items-center gap-2">
+                <LogOut className="h-4 w-4" /> Logout
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </nav>
+
+      {/* Main Layout */}
+      <div className="flex min-h-[calc(100vh-72px)]">
+        {/* Sidebar (desktop) */}
+        <aside
+          className={`hidden md:flex flex-col w-56 px-4 py-8 ${
+            theme === "dark"
+              ? "bg-gray-950 border-r border-gray-800"
+              : "bg-white border-r border-gray-200"
+          }`}
+        >
+          <SidebarContent />
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 px-2 md:px-8 py-6 transition-all">
+          {/* Dashboard header */}
+          <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-semibold mb-2 tracking-tight">
+                Flight Requests
+              </h1>
+              <p className="text-muted-foreground text-base">
+                Monitor and manage your tracked flights in a modern dashboard.
+              </p>
+            </div>
+            {/* Table Filters/Actions */}
+            <div className="flex gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    {FILTER_OPTIONS.find((opt) => opt.value === filter)?.label || "Filter"} <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {FILTER_OPTIONS.map(opt => (
+                    <DropdownMenuItem
+                      key={opt.value}
+                      onClick={() => setFilter(opt.value)}
+                      className={filter === opt.value ? "bg-indigo-100 dark:bg-indigo-900 font-semibold" : ""}
+                    >
+                      {opt.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button variant="default" size="sm">
+                New Request
+              </Button>
+            </div>
+          </div>
+
+          {/* Data Table in Card */}
+          <Card
+            className={`p-0 shadow-xl overflow-hidden ${
+              theme === "dark" ? "bg-gray-950" : "bg-white"
+            }`}
+          >
+            <div className={`overflow-x-auto`}>
+              <Table>
+                <TableHeader
+                  className={`${
+                    theme === "dark" ? "bg-gray-800" : "bg-blue-50"
+                  } transition-all`}
+                >
+                  <TableRow>
+                    <TableHead className="px-6 py-4">Booking Class</TableHead>
+                    <TableHead className="px-6 py-4">Flight Number</TableHead>
+                    <TableHead className="px-6 py-4">PNR</TableHead>
+                    <TableHead className="px-6 py-4">Status</TableHead>
+                    <TableHead className="px-6 py-4">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    Array.from({ length: 6 }).map((_, i) => (
+                      <TableRow key={i}>
+                        <TableCell colSpan={5}>
+                          <Skeleton className="h-8 w-full" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : requests.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        className="py-8 text-center text-muted-foreground"
+                      >
+                        No flight requests found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    requests.map((req, i) => (
+                      <TableRow
+                        key={req.id}
+                        className={`transition hover:bg-indigo-50 dark:hover:bg-indigo-950 ${
+                          i % 2 === 0
+                            ? theme === "dark"
+                              ? "bg-gray-900"
+                              : "bg-gray-100"
+                            : theme === "dark"
+                              ? "bg-gray-950"
+                              : "bg-white"
+                        }`}
+                      >
+                        <TableCell className="px-6 py-4 font-mono font-medium">
+                          {req.target_booking_class}
+                        </TableCell>
+                        <TableCell className="px-6 py-4">
+                          {req.flight_number ?? (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-6 py-4">
+                          {req.pnr_number ?? (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-6 py-4">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className={`rounded-full px-3 py-1 capitalize transition ${STATUS_OPTIONS.find(
+                                  (opt) => opt.value === req.status
+                                )?.color} text-white`}
+                              >
+                                {STATUS_OPTIONS.find((opt) => opt.value === req.status)?.label ||
+                                  req.status}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              {STATUS_OPTIONS.map((opt) => (
+                                <DropdownMenuItem
+                                  key={opt.value}
+                                  onClick={() => handleStatusChange(req.id, opt.value)}
+                                  className="flex items-center gap-2"
+                                >
+                                  <span
+                                    className={`inline-block w-2 h-2 rounded-full ${opt.color}`}
+                                  ></span>
+                                  {opt.label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                        <TableCell className="px-6 py-4">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelected(req)}
+                          >
+                            View
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          {/* Modal for selected flight request */}
+          <ViewFlightRequestModal
+            open={!!selected}
+            onOpenChange={(v) => !v && setSelected(null)}
+            flightRequest={selected}
+            onUpdateStatus={handleStatusChange}
+            onUpdateTraveler={handleUpdateTraveler}
+            onUpdateSearchQuery={handleUpdateSearchQuery}
+          />
+        </main>
+      </div>
+    </div>
   );
 }
 
-export default function HomePage() {
-  // Server Action state
-  const initialState: FormState = { message: '', status: 'idle' };
-  const [state, formAction] = useActionState(trackFlightAction, initialState);
-
-  // Form fields
-  const [email, setEmail] = useState('');
-  const [bookingClass, setBookingClass] = useState('');
-  const [flightNumber, setFlightNumber] = useState('');
-  const [travelerInfo, setTravelerInfo] = useState(
-    JSON.stringify(
-      [
-        {
-          id: '1',
-          dateOfBirth: '',
-          name: { firstName: '', lastName: '' },
-          gender: '',
-          contact: { emailAddress: '', phones: [{ deviceType: 'MOBILE', countryCallingCode: '', number: '' }] },
-          documents: [
-            {
-              documentType: 'PASSPORT',
-              birthPlace: '',
-              issuanceLocation: '',
-              issuanceDate: '',
-              number: '',
-              expiryDate: '',
-              issuanceCountry: '',
-              validityCountry: '',
-              nationality: '',
-              holder: true,
-            },
-          ],
-        },
-      ],
-      null,
-      2
-    )
-  );
-  const [query, setQuery] = useState('');
-
-  // On mount, load all fields (including query) from localStorage if present, otherwise set defaults
-  useEffect(() => {
-    setEmail(localStorage.getItem('flightTracker_email') || 'agent@example.com');
-    setBookingClass(localStorage.getItem('flightTracker_bookingClass') || 'K');
-    setFlightNumber(localStorage.getItem('flightTracker_flightNumber') || '511');
-    setTravelerInfo(localStorage.getItem('flightTracker_travelerInfo') || JSON.stringify([
-      {
-        id: '1',
-        dateOfBirth: '',
-        name: { firstName: '', lastName: '' },
-        gender: '',
-        contact: { emailAddress: '', phones: [{ deviceType: 'MOBILE', countryCallingCode: '', number: '' }] },
-        documents: [
-          {
-            documentType: 'PASSPORT',
-            birthPlace: '',
-            issuanceLocation: '',
-            issuanceDate: '',
-            number: '',
-            expiryDate: '',
-            issuanceCountry: '',
-            validityCountry: '',
-            nationality: '',
-            holder: true,
-          },
-        ],
-      },
-    ], null, 2));
-    const savedQuery = localStorage.getItem('flightTracker_query');
-    setQuery(savedQuery !== null ? savedQuery : '');
-  }, []);
-
-  // Persist fields to localStorage when they change
-  useEffect(() => { if (email) localStorage.setItem('flightTracker_email', email); }, [email]);
-  useEffect(() => { if (bookingClass) localStorage.setItem('flightTracker_bookingClass', bookingClass); }, [bookingClass]);
-  useEffect(() => { if (flightNumber !== undefined) localStorage.setItem('flightTracker_flightNumber', flightNumber); }, [flightNumber]);
-  useEffect(() => { if (travelerInfo) localStorage.setItem('flightTracker_travelerInfo', travelerInfo); }, [travelerInfo]);
-  useEffect(() => { localStorage.setItem('flightTracker_query', query); }, [query]);
-
+function SidebarContent({ onClose }: { onClose?: () => void }) {
   return (
-    <main className="flex min-h-screen flex-col items-center bg-gray-100 p-8 sm:p-12 md:p-24">
-      <div className="z-10 w-full max-w-4xl">
-        <div className="bg-white p-10 rounded-3xl shadow-2xl border border-gray-200">
-          <h1 className="text-4xl font-extrabold text-gray-900 mb-3 tracking-tight">Flight Tracking Request</h1>
-          <p className="text-gray-500 mb-10 text-lg">Fill in the flight and traveler details to start tracking seat availability.</p>
-          <form action={formAction} className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-1">
-                  Agent Email
-                </label>
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-base p-3 text-gray-800 bg-gray-50"
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="bookingClass" className="block text-sm font-semibold text-gray-700 mb-1">
-                  Target Booking Class
-                </label>
-                <input
-                  type="text"
-                  id="bookingClass"
-                  name="bookingClass"
-                  value={bookingClass}
-                  onChange={(e) => setBookingClass(e.target.value.toUpperCase())}
-                  className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-base p-3 text-gray-800 bg-gray-50"
-                  maxLength={5}
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="flightNumber" className="block text-sm font-semibold text-gray-700 mb-1">
-                  Flight Number <span className="font-normal text-gray-400">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  id="flightNumber"
-                  name="flightNumber"
-                  value={flightNumber}
-                  onChange={(e) => setFlightNumber(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-base p-3 text-gray-800 bg-gray-50"
-                />
-              </div>
-            </div>
-            {/* Traveler Info Form */}
-            <div className="py-6">
-              <TravelerInfoForm travelerInfo={travelerInfo} setTravelerInfo={setTravelerInfo} />
-            </div>
-            {/* Editable Amadeus Search Query */}
-            <div>
-              <label htmlFor="query" className="block text-sm font-semibold text-gray-700 mb-1">
-                Amadeus Search Query (JSON)
-              </label>
-              <textarea
-                id="query"
-                name="query"
-                rows={15}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-3 font-mono text-gray-900 bg-gray-50"
-                required
-              />
-            </div>
-            {/* Hidden field for full traveler info */}
-            <input type="hidden" name="travelerInfo" value={travelerInfo} />
-            <div className="flex items-center justify-end">
-              <SubmitButton />
-            </div>
-          </form>
-          {state.message && (
-            <div
-              className={`mt-8 p-4 rounded-md text-md font-semibold border ${
-                state.status === 'success'
-                  ? 'bg-green-600 text-white border-green-700'
-                  : state.status === 'error'
-                  ? 'bg-red-600 text-white border-red-700'
-                  : state.status === 'queued'
-                  ? 'bg-blue-600 text-white border-blue-700'
-                  : 'bg-gray-200 text-gray-900 border-gray-300'
-              }`}
-            >
-              {state.message}
-            </div>
-          )}
-        </div>
-      </div>
-    </main>
+    <nav className="flex flex-col gap-2">
+      <Button
+        variant="ghost"
+        className="justify-start w-full text-left"
+        onClick={onClose}
+      >
+        Dashboard
+      </Button>
+      <Button
+        variant="ghost"
+        className="justify-start w-full text-left"
+        onClick={onClose}
+      >
+        Requests
+      </Button>
+      <Button
+        variant="ghost"
+        className="justify-start w-full text-left"
+        onClick={onClose}
+      >
+        Settings
+      </Button>
+      <Button
+        variant="ghost"
+        className="justify-start w-full text-left"
+        onClick={onClose}
+      >
+        Help
+      </Button>
+    </nav>
   );
 }
