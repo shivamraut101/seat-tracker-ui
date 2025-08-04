@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Moon, Sun, Menu, UserCircle, LogOut, ChevronDown, Plane } from "lucide-react";
-import { getFlightRequests, updateFlightRequestStatus, updateFlightRequestTraveler, updateFlightRequestSearchQuery } from "./actions/flightRequests";
+import { getFlightRequests, updateFlightRequestStatus, updateFlightRequestTraveler, updateFlightRequestSearchQuery, updateFlightRequestBookingPreferences } from "./actions/flightRequests";
 import ViewFlightRequestModal, { FlightRequest } from "@/components/ViewFlightRequestModal";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -116,6 +116,25 @@ export default function DashboardPage() {
       }
     } catch (err) {
       toast.error("Failed to update search query");
+      await fetchData(); // Revert by refetching
+    }
+  };
+
+  const handleUpdateBookingPreferences = async (id: string, bookingPreferences: any[]) => {
+    try {
+      setRequests((reqs) =>
+        reqs.map((r) => (r.id === id ? { ...r, booking_preferences: bookingPreferences } : r))
+      );
+      const { success, data } = await updateFlightRequestBookingPreferences(id, bookingPreferences);
+      if (success) {
+        setRequests((reqs) =>
+          reqs.map((r) => (r.id === id ? data : r))
+        );
+        toast.success("Booking preferences updated successfully");
+        return data; // return updated FlightRequest for modal real-time update
+      }
+    } catch (err) {
+      toast.error("Failed to update booking preferences");
       await fetchData(); // Revert by refetching
     }
   };
@@ -240,10 +259,10 @@ export default function DashboardPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
               <Link href="/new">
-        <Button variant="default" size="sm">
-          New Request
-        </Button>
-      </Link>
+                <Button variant="default" size="sm">
+                  New Request
+                </Button>
+              </Link>
             </div>
           </div>
 
@@ -261,7 +280,8 @@ export default function DashboardPage() {
                   } transition-all`}
                 >
                   <TableRow>
-                    <TableHead className="px-6 py-4">Booking Class</TableHead>
+                    <TableHead className="px-6 py-4">Booking Preferences</TableHead>
+                    <TableHead className="px-6 py-4">Matched</TableHead>
                     <TableHead className="px-6 py-4">PNR</TableHead>
                     <TableHead className="px-6 py-4">Status</TableHead>
                     <TableHead className="px-6 py-4">Actions</TableHead>
@@ -300,7 +320,18 @@ export default function DashboardPage() {
                         }`}
                       >
                         <TableCell className="px-6 py-4 font-mono font-medium">
-                          {req.target_booking_classes}
+                          {Array.isArray(req.booking_preferences) && req.booking_preferences.length
+                            ? req.booking_preferences.map(
+                                (bp) =>
+                                  `${bp.bookingClass}/${bp.flightNumber}/${bp.carrierCode}`
+                              ).join(", ")
+                            : <span className="text-gray-400">—</span>}
+                        </TableCell>
+                        <TableCell className="px-6 py-4 font-mono font-medium">
+                          {req.matched_preference
+                            ? `${req.matched_preference.bookingClass}/${req.matched_preference.flightNumber}/${req.matched_preference.carrierCode}`
+                            : <span className="text-gray-400">—</span>
+                          }
                         </TableCell>
                         <TableCell className="px-6 py-4">
                           {req.pnr_number ?? (
@@ -362,6 +393,7 @@ export default function DashboardPage() {
             onUpdateStatus={handleStatusChange}
             onUpdateTraveler={handleUpdateTraveler}
             onUpdateSearchQuery={handleUpdateSearchQuery}
+            onUpdateBookingPreferences={handleUpdateBookingPreferences} // use the handler above!}
           />
         </main>
       </div>

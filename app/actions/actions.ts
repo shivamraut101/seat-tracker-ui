@@ -10,10 +10,8 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const emailUser = process.env.EMAIL_USER;
 const emailPass = process.env.EMAIL_PASS;
 
-// Initialize Supabase client
 const supabase = createClient(supabaseUrl!, supabaseKey!);
 
-// Initialize Nodemailer transporter
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -22,35 +20,39 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// --- SCHEMAS AND TYPES ---
+// New booking preference schema for array of objects
+const bookingPreferenceSchema = z.object({
+  id: z.number().int(),
+  bookingClass: z.string().min(1, "Booking class is required"),
+  flightNumber: z.string().min(1, "Flight number is required"),
+  carrierCode: z.string().min(1, "Carrier code is required"),
+});
+const bookingPreferencesArraySchema = z.array(bookingPreferenceSchema).min(1);
+
 const flightRequestSchema = z.object({
   submitted_by: z.string().email({ message: "Invalid email address." }),
-  target_booking_class: z.string().min(1, { message: "Booking class cannot be empty." }),
   search_query_str: z.string().refine((val) => {
-    try {
-      JSON.parse(val);
-      return true;
-    } catch (e) {
-      return false;
-    }
+    try { JSON.parse(val); return true; } catch (e) { return false; }
   }, { message: "Search query must be valid JSON." }),
   traveler_info_str: z.string().refine((val) => {
-    try {
-      JSON.parse(val);
-      return true;
-    } catch (e) {
-      return false;
-    }
+    try { JSON.parse(val); return true; } catch (e) { return false; }
   }, { message: "Traveler info must be valid JSON." }),
+  booking_preferences_str: z.string().refine((val) => {
+    try { 
+      const arr = JSON.parse(val); 
+      bookingPreferencesArraySchema.parse(arr);
+      return true;
+    } catch (e) { return false; }
+  }, { message: "Booking preferences must be a valid array." }),
 });
 
 export type FormState = {
   message: string;
   status: "idle" | "success" | "error" | "queued" | "held";
   pnr?: string;
+  matchedPreference?: any | null;
 };
 
-// --- Amadeus API CLIENT ---
 const baseUrl = process.env.NEXT_PUBLIC_AMADEUS_API?.trim();
 const AMADEUS_CLIENT_ID = process.env.AMADEUS_CLIENT_ID!;
 const AMADEUS_CLIENT_SECRET = process.env.AMADEUS_CLIENT_SECRET!;
@@ -71,33 +73,27 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-async function searchForFlightOnce(
-  accessToken: string,
-  searchQuery: object,
-  targetBookingClass: string
-): Promise<object | null> {
-  const response = await fetch(`${baseUrl}/v2/shopping/flight-offers`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(searchQuery),
-  });
-  if (!response.ok) throw new Error("Flight search API request failed");
-  const json = await response.json();
-  const flightOffers = json.data;
-  if (!flightOffers) return null;
-  for (const offer of flightOffers) {
-    for (const pricing of offer.travelerPricings) {
-      for (const fareDetails of pricing.fareDetailsBySegment) {
-        if (fareDetails.class === targetBookingClass) {
-          return offer;
+// --- Improved matching logic ---
+function matchesPreference(offer: any, preference: any): boolean {
+  for (const pricing of offer.travelerPricings || []) {
+    // Map segmentId -> fare class for this traveler
+    const segmentClassMap = new Map();
+    for (const fareDetail of pricing.fareDetailsBySegment || []) {
+      segmentClassMap.set(String(fareDetail.segmentId), String(fareDetail.class).toUpperCase());
+    }
+    for (const itin of offer.itineraries || []) {
+      for (const seg of itin.segments || []) {
+        if (
+          String(seg.carrierCode).toUpperCase() === String(preference.carrierCode).toUpperCase() &&
+          String(seg.number).toUpperCase() === String(preference.flightNumber).toUpperCase() &&
+          segmentClassMap.get(String(seg.id)) === String(preference.bookingClass).toUpperCase()
+        ) {
+          return true;
         }
       }
     }
   }
-  return null;
+  return false;
 }
 
 async function bookFlight(
@@ -105,31 +101,32 @@ async function bookFlight(
   flightOffer: object,
   travelers: object[]
 ): Promise<object> {
+  const requestBody = {
+    data: {
+      type: "flight-order",
+      flightOffers: [flightOffer],
+      travelers,
+      ticketingAgreement: {
+        option: "DELAY_TO_CANCEL",
+        delay: "1D",
+      },
+    },
+  };
   const response = await fetch(`${baseUrl}/v1/booking/flight-orders`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      data: {
-        type: "flight-order",
-        flightOffers: [flightOffer],
-        travelers,
-        ticketingAgreement: {
-          option: "DELAY_TO_CANCEL",
-          delay: "1D",
-        },
-      },
-    }),
+    body: JSON.stringify(requestBody),
   });
-  if (!response.ok) throw new Error("Flight booking API request failed");
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Flight booking API request failed: ${response.status} - ${errorText}`);
+  }
   return await response.json();
 }
 
-/**
- * Send a detailed HTML email to the user with their held ticket and PNR information.
- */
 async function sendPNREmail(
   recipientEmail: string,
   pnr: string,
@@ -200,67 +197,98 @@ async function sendPNREmail(
   }
 }
 
-// --- MAIN SERVER ACTION ---
-
 export async function trackFlightAction(
   prevState: FormState,
   formData: FormData
 ): Promise<FormState> {
-  // 1. Validate form data
+  // Parse booking preferences
+  let bookingPreferences: any[] = [];
+  try {
+    bookingPreferences = JSON.parse(formData.get("bookingPreferences") as string);
+    bookingPreferencesArraySchema.parse(bookingPreferences);
+  } catch {
+    return { status: "error", message: "Booking preferences not valid." };
+  }
+
+  let travelerInfoRaw = formData.get("travelerInfo") as string;
+  let traveler_info: any[];
+  try {
+    traveler_info = JSON.parse(travelerInfoRaw);
+  } catch {
+    return { status: "error", message: "Traveler info not valid JSON." };
+  }
+
+  // Validate form data
   const validatedFields = flightRequestSchema.safeParse({
     submitted_by: formData.get("email"),
-    target_booking_class: formData.get("bookingClass"),
     search_query_str: formData.get("query"),
-    traveler_info_str: formData.get("travelerInfo"),
+    traveler_info_str: travelerInfoRaw,
+    booking_preferences_str: JSON.stringify(bookingPreferences),
   });
 
   if (!validatedFields.success) {
     return { status: "error", message: "Invalid form data." };
   }
-  const { submitted_by, target_booking_class, search_query_str, traveler_info_str } = validatedFields.data;
+  const { submitted_by, search_query_str } = validatedFields.data;
   const search_query = JSON.parse(search_query_str);
-  const traveler_info = JSON.parse(traveler_info_str);
-  console.log("Traveler info:", traveler_info);
-  // Get flight_number directly from the form, not from query JSON!
-  const flight_number = formData.get("flightNumber") as string || null;
-
-  console.log("⚡ Performing immediate check and hold for request from:", submitted_by, "Flight:", flight_number);
 
   let token: string;
   try {
     token = await getAccessToken();
-  } catch (e) {
+  } catch {
     return { status: "error", message: "Could not authenticate with Amadeus. Please try again later." };
   }
 
-  let foundFlight: object | null;
+  // Fetch flight-offers just once for all preferences
+  let flightOffers: any[] = [];
   try {
-    foundFlight = await searchForFlightOnce(token, search_query, target_booking_class);
-  } catch (e) {
-    return { status: "error", message: "Flight search failed. See logs for details." };
+    const response = await fetch(`${baseUrl}/v2/shopping/flight-offers`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(search_query),
+    });
+    if (!response.ok) throw new Error("Flight search API request failed");
+    const json = await response.json();
+    flightOffers = json.data || [];
+  } catch (err: any) {
+    return { status: "error", message: ("Flight search failed: " + (err?.message ?? err)) };
   }
 
-  if (foundFlight) {
-    // Book and hold ticket immediately
+  let foundFlight: object | null = null;
+  let matchedPreference: any | null = null;
+
+  for (const pref of bookingPreferences) {
+    for (const offer of flightOffers) {
+      if (matchesPreference(offer, pref)) {
+        foundFlight = offer;
+        matchedPreference = pref;
+        break;
+      }
+    }
+    if (foundFlight) break;
+  }
+
+  // If a flight was found, book immediately
+  if (foundFlight && matchedPreference) {
     try {
       const booking = await bookFlight(token, foundFlight, traveler_info);
-
-      // Extract PNR (reference) from first associatedRecords[].reference, as per Amadeus API
       let pnr: string | null = null;
       const associatedRecords = booking?.data?.associatedRecords;
       if (Array.isArray(associatedRecords) && associatedRecords.length > 0) {
         pnr = associatedRecords[0]?.reference || null;
       }
-
       const { error: insertError } = await supabase.from("flight_requests").insert([{
         submitted_by,
         search_query,
-        target_booking_class,
         traveler_info,
         status: "held",
         last_checked_at: new Date().toISOString(),
-        flight_number,
         pnr_number: pnr,
+        booking_preferences: bookingPreferences,
+        matched_preference: matchedPreference
       }]);
       if (insertError) {
         console.error("🚨 Supabase insert error (held):", insertError);
@@ -269,30 +297,51 @@ export async function trackFlightAction(
       return {
         status: "held",
         message: pnr
-          ? `The ticket has been successfully held. PNR: ${pnr}. Confirmation email sent.`
-          : "Ticket held, but no PNR returned.",
+          ? `The ticket has been successfully held for your matched preference. PNR: ${pnr}. Confirmation email sent.`
+          : `Ticket held, but no PNR returned.`,
         pnr: pnr ?? undefined,
+        matchedPreference
       };
-    } catch {
-      return { status: "error", message: "Booking failed. See logs for details." };
+    } catch (err) {
+      // Insert into Supabase anyway for tracking
+      const { error: insertError } = await supabase.from("flight_requests").insert([{
+        submitted_by,
+        search_query,
+        traveler_info,
+        status: "error",
+        last_checked_at: new Date().toISOString(),
+        pnr_number: null,
+        booking_preferences: bookingPreferences,
+        matched_preference: matchedPreference
+      }]);
+      if (insertError) {
+        console.error("🚨 Supabase insert error (error case):", insertError);
+      }
+      return {
+        status: "error",
+        message: "Booking failed (Amadeus API error): " + (err?.message ?? err),
+        matchedPreference
+      };
     }
-  } else {
-    // No match: Save as active for worker to check later
-    const { error: insertError } = await supabase.from("flight_requests").insert([{
-      submitted_by,
-      search_query,
-      target_booking_class,
-      traveler_info,
-      status: "active",
-      last_checked_at: new Date().toISOString(),
-      flight_number,
-    }]);
-    if (insertError) {
-      console.error("🚨 Supabase insert error (active):", insertError);
-    }
-    return {
-      status: "queued",
-      message: "Flight not available right now. Your request has been queued and will be checked every 5 minutes.",
-    };
   }
+
+  // No match found: save for worker
+  const { error: insertError } = await supabase.from("flight_requests").insert([{
+    submitted_by,
+    search_query,
+    traveler_info,
+    status: "active",
+    last_checked_at: new Date().toISOString(),
+    pnr_number: null,
+    booking_preferences: bookingPreferences,
+    matched_preference: null
+  }]);
+  if (insertError) {
+    console.error("🚨 Supabase insert error (active):", insertError);
+  }
+  return {
+    status: "queued",
+    message: "Flight not available right now in any of your preferred options. Your request has been queued for future checking.",
+    matchedPreference: null
+  };
 }
