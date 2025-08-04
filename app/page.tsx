@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import toast from "react-hot-toast";
+import Link from "next/link";
 
 const STATUS_OPTIONS = [
   { value: "active", label: "Active", color: "bg-blue-500" },
@@ -238,9 +239,11 @@ export default function DashboardPage() {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button variant="default" size="sm">
-                New Request
-              </Button>
+              <Link href="/new">
+        <Button variant="default" size="sm">
+          New Request
+        </Button>
+      </Link>
             </div>
           </div>
 
@@ -259,7 +262,6 @@ export default function DashboardPage() {
                 >
                   <TableRow>
                     <TableHead className="px-6 py-4">Booking Class</TableHead>
-                    <TableHead className="px-6 py-4">Flight Number</TableHead>
                     <TableHead className="px-6 py-4">PNR</TableHead>
                     <TableHead className="px-6 py-4">Status</TableHead>
                     <TableHead className="px-6 py-4">Actions</TableHead>
@@ -298,12 +300,7 @@ export default function DashboardPage() {
                         }`}
                       >
                         <TableCell className="px-6 py-4 font-mono font-medium">
-                          {req.target_booking_class}
-                        </TableCell>
-                        <TableCell className="px-6 py-4">
-                          {req.flight_number ?? (
-                            <span className="text-muted-foreground">—</span>
-                          )}
+                          {req.target_booking_classes}
                         </TableCell>
                         <TableCell className="px-6 py-4">
                           {req.pnr_number ?? (

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { travelersSchema } from '../app/utils/zod/travelerInfoSchema';
 import { ZodError, ZodIssue } from 'zod';
 
@@ -55,7 +55,7 @@ function emptyTraveler(): Omit<Traveler, 'id'> {
   return {
     dateOfBirth: '',
     name: { firstName: '', lastName: '' },
-    gender: '', // always initialize
+    gender: '',
     contact: {
       emailAddress: '',
       phones: [{
@@ -82,9 +82,7 @@ function emptyTraveler(): Omit<Traveler, 'id'> {
 }
 
 function sanitizeTraveler(trav: Partial<Omit<Traveler, 'id'>> | undefined): Omit<Traveler, 'id'> {
-  // Helper to uppercase country fields safely
   const upper = (val: string | undefined) => val ? val.toUpperCase() : '';
-  // Helper to digits-only for countryCallingCode
   const digits = (val: string | undefined) => val ? val.replace(/\D/g, '') : '';
   return {
     dateOfBirth: trav?.dateOfBirth || '',
@@ -92,7 +90,7 @@ function sanitizeTraveler(trav: Partial<Omit<Traveler, 'id'>> | undefined): Omit
       firstName: trav?.name?.firstName || '',
       lastName: trav?.name?.lastName || ''
     },
-    gender: typeof trav?.gender === 'string' ? trav.gender : '', // always initialize
+    gender: typeof trav?.gender === 'string' ? trav.gender : '',
     contact: {
       emailAddress: trav?.contact?.emailAddress || '',
       phones: Array.isArray(trav?.contact?.phones) && trav.contact.phones.length > 0
@@ -165,7 +163,9 @@ function getPathForDocument(idx: number, docIdx: number, key: string) {
 
 // --- Main Component ---
 export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: TravelerInfoFormProps) {
-  // On mount, always sanitize loaded data for all fields, including gender
+  const isFirstRender = useRef(true);
+
+  // Always load from localStorage if available, else from prop
   const [travelers, setTravelers] = useState<Omit<Traveler, 'id'>[]>(() => {
     try {
       if (typeof window !== "undefined") {
@@ -174,11 +174,29 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
           return getSafeTravelers(JSON.parse(local));
         }
       }
-      return getSafeTravelers(JSON.parse(travelerInfo)); // prop always sanitized
+      return getSafeTravelers(JSON.parse(travelerInfo));
     } catch {
       return [emptyTraveler()];
     }
   });
+
+  // Sync with prop on reload or when prop changes (unless user is actively editing)
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    try {
+      const parsed = JSON.parse(travelerInfo);
+      // Only update if the JSON differs, to avoid loops and only if not actively editing
+      if (JSON.stringify(parsed) !== JSON.stringify(travelers.map((t, idx) => ({ ...t, id: String(idx + 1) })))) {
+        setTravelers(getSafeTravelers(parsed));
+      }
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [travelerInfo]);
 
   // Track which fields have been touched (blurred at least once)
   type TouchedMap = Record<string, boolean>;
@@ -282,7 +300,6 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
                 di === docIdx
                   ? {
                       ...doc,
-                      // Uppercase for country codes and locations
                       [key]:
                         [
                           "birthPlace",
@@ -358,7 +375,6 @@ export default function TravelerInfoForm({ travelerInfo, setTravelerInfo }: Trav
     setTouched(prev => ({ ...prev, [path.join('.')]: true }));
   }
   function shouldShowError(fieldPath: (string | number)[]) {
-    // Show if field was touched
     return touched[fieldPath.join('.')];
   }
 
