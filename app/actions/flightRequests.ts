@@ -77,3 +77,36 @@ export async function updateFlightRequestSearchQuery(id: string, searchQuery: an
     throw error;
   }
 }
+
+export async function updateFlightRequestBookingPreferences(id: string, bookingPreferences: any[]) {
+  try {
+    // Validate array shape
+    if (!Array.isArray(bookingPreferences)) throw new Error("bookingPreferences is not an array");
+    for (const bp of bookingPreferences) {
+      if (
+        typeof bp.id === "undefined" ||
+        typeof bp.carrierCode !== "string" ||
+        typeof bp.bookingClass !== "string" ||
+        typeof bp.flightNumber !== "string"
+      ) {
+        throw new Error("Invalid booking preference object structure");
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("flight_requests")
+      .update({ booking_preferences: bookingPreferences })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) {
+      console.error("Failed to update booking preferences:", error);
+      throw new Error(`Failed to update booking preferences: ${error.message}`);
+    }
+    revalidatePath("/", "page");
+    return { success: true, data };
+  } catch (error) {
+    console.error("Error in updateFlightRequestBookingPreferences:", error);
+    throw error;
+  }
+}
